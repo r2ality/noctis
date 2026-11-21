@@ -11,8 +11,9 @@ android {
         applicationId = "dev.noctis.browser"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Keep applicationId stable and increment versionCode for in-place updates.
+        versionCode = 5
+        versionName = "0.2.3"
 
         vectorDrawables.useSupportLibrary = false
     }
