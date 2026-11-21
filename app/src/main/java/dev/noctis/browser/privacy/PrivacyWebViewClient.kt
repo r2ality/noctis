@@ -1,3 +1,9 @@
+/*
+ * Noctis - lightweight, privacy-first Android browser
+ * Copyright (C) 2026 Noctis contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 package dev.noctis.browser.privacy
 
 import android.annotation.TargetApi
