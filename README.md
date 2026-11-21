@@ -4,6 +4,10 @@ Noctis is a lightweight, privacy-first Android browser written almost entirely i
 
 The project borrows design principles from [Monivo](https://github.com/r2ality/monivo): a small browser, no stored browsing-history database, third-party-cookie restrictions, integrated content filtering, and NoScript-style JavaScript control. No Monivo source files are copied into this project.
 
+## Download
+
+Download the binary [here](https://github.com/r2ality/noctis/releases)
+
 ## Why would you want to use this?
 
 1. As an alternative to the proprietary browser [Via browser.](https://viayoo.com/en/)
