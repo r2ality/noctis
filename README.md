@@ -4,6 +4,20 @@ Noctis is a lightweight, privacy-first Android browser written almost entirely i
 
 The project borrows design principles from [Monivo](https://github.com/r2ality/monivo): a small browser, no stored browsing-history database, third-party-cookie restrictions, integrated content filtering, and NoScript-style JavaScript control. No Monivo source files are copied into this project.
 
+## Why would you want to use this?
+
+1. As an alternative to the proprietary browser [Via browser.](https://viayoo.com/en/)
+2. For the security and privacy features.
+3. To revive your old phone after installing a Custom ROM into it.
+
+## Tested
+
+Tested on LineageOS 23.2 (Android 16 QPR2), Moto G22.
+
+Tested on latest PixelOS (Android 17), Moto G54 5G.
+
+In need of testers, it should work in Android version 8, all the way up to 17, in theory.
+
 ## Current project baseline
 
 - Application ID: `dev.noctis.browser`
