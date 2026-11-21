@@ -1,3 +1,9 @@
+/*
+ * Noctis - lightweight, privacy-first Android browser
+ * Copyright (C) 2026 Noctis contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 package dev.noctis.browser
 
 import android.app.Activity
@@ -60,43 +66,62 @@ class MainActivity : Activity() {
     private lateinit var settingsPanel: ScrollView
     private lateinit var addressBar: EditText
     private lateinit var progress: ProgressBar
-    private lateinit var privateButton: Button
     private lateinit var tabButton: Button
-    private lateinit var bottomBar: LinearLayout
+    private lateinit var menuButton: Button
     private var showingSettings = false
     private var showingHome = true
 
-    private val bg = Color.rgb(8, 8, 8)
-    private val surface = Color.rgb(21, 21, 21)
-    private val surfaceRaised = Color.rgb(31, 31, 31)
-    private val primary = Color.rgb(238, 238, 238)
-    private val secondary = Color.rgb(164, 164, 164)
-    private val accent = Color.rgb(189, 189, 189)
+    private var bg = Color.rgb(0, 0, 0)
+    private var surface = Color.rgb(16, 16, 16)
+    private var surfaceRaised = Color.rgb(26, 26, 26)
+    private var primary = Color.rgb(242, 242, 242)
+    private var secondary = Color.rgb(166, 166, 166)
+    private var accent = Color.rgb(189, 189, 189)
+    private var outline = Color.rgb(76, 76, 76)
+
+    private data class ThemePalette(
+        val bg: Int,
+        val surface: Int,
+        val surfaceRaised: Int,
+        val primary: Int,
+        val secondary: Int,
+        val accent: Int,
+        val outline: Int
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val savedTheme = getSharedPreferences("noctis_settings", Context.MODE_PRIVATE)
+            .getString("theme_mode", BrowserSettings.THEME_AMOLED)
+        setTheme(if (savedTheme == BrowserSettings.THEME_LIGHT) R.style.NoctisTheme_Light else R.style.NoctisTheme)
         super.onCreate(savedInstanceState)
-        settings = BrowserSettings(this)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
-        window.decorView.systemUiVisibility = 0
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        WebView.setWebContentsDebuggingEnabled(false)
+        try {
+            settings = BrowserSettings(this)
+            applyThemePalette(updateViews = false)
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            WebView.setWebContentsDebuggingEnabled(false)
 
-        buildLayout()
-        createTab()
+            buildLayout()
+            // Apply system-bar styling only after setContentView has created the window decor.
+            // On Android 11+, Window.insetsController may dereference a not-yet-created DecorView.
+            root.post { updateSystemBars() }
+            // A missing or broken system WebView provider must not crash the whole browser UI.
+            if (createTab() == null) return
 
-        val incoming = intent?.data?.takeIf { it.scheme == "http" || it.scheme == "https" }
-        if (settings.privateSessionWasInterrupted()) {
-            // A force-stop can skip Activity.onDestroy; do not load a new page until stale session data is gone.
-            CookieManager.getInstance().setAcceptCookie(false)
-            clearBrowsingData {
-                settings.setPrivateSession(false)
-                applyCookiePolicy()
-                Toast.makeText(this, "Recovered and cleared an interrupted private session", Toast.LENGTH_LONG).show()
+            val incoming = intent?.data?.takeIf { it.scheme == "http" || it.scheme == "https" }
+            if (settings.privateSessionWasInterrupted()) {
+                // A force-stop can skip Activity.onDestroy; do not load a new page until stale session data is gone.
+                CookieManager.getInstance().setAcceptCookie(false)
+                clearBrowsingData {
+                    settings.setPrivateSession(false)
+                    applyCookiePolicy()
+                    Toast.makeText(this, "Recovered and cleared an interrupted private session", Toast.LENGTH_LONG).show()
+                    if (incoming != null) navigateTo(incoming.toString()) else showHome()
+                }
+            } else {
                 if (incoming != null) navigateTo(incoming.toString()) else showHome()
             }
-        } else {
-            if (incoming != null) navigateTo(incoming.toString()) else showHome()
+        } catch (error: RuntimeException) {
+            showStartupFailure(error)
         }
     }
 
@@ -116,51 +141,39 @@ class MainActivity : Activity() {
             }
             insets
         }
-        val brandBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), dp(10), dp(12), dp(8))
-            setBackgroundColor(bg)
-        }
-        val logo = ImageView(this).apply {
-            setImageResource(dev.noctis.browser.R.drawable.ic_noctis)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        brandBar.addView(logo, LinearLayout.LayoutParams(dp(34), dp(34)))
-        val brandText = TextView(this).apply {
-            text = "Noctis"
-            textSize = 20f
-            setTextColor(primary)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(dp(10), 0, 0, 0)
-        }
-        brandBar.addView(brandText, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        privateButton = textButton("◌ Private")
-        privateButton.setOnClickListener { togglePrivateSession() }
-        brandBar.addView(privateButton)
-        val menuButton = textButton("⋮")
-        menuButton.textSize = 24f
-        menuButton.setOnClickListener { showBrowserMenu(menuButton) }
-        brandBar.addView(menuButton, LinearLayout.LayoutParams(dp(44), dp(44)))
-        root.addView(brandBar)
 
-        val addressRow = LinearLayout(this).apply {
+        // One compact Chrome-inspired toolbar: navigation, address/search, new tab,
+        // tab count and the overflow menu. There is intentionally no bottom bar.
+        val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(2), dp(12), dp(10))
+            setPadding(dp(7), dp(6), dp(7), dp(6))
             setBackgroundColor(bg)
         }
+        val backButton = toolbarButton("‹", "Go back") {
+            currentTab()?.webView?.let { if (it.canGoBack()) it.goBack() }
+        }
+        toolbar.addView(backButton, LinearLayout.LayoutParams(dp(36), dp(42)))
+
+        val forwardButton = toolbarButton("›", "Go forward") {
+            currentTab()?.webView?.let { if (it.canGoForward()) it.goForward() }
+        }
+        toolbar.addView(forwardButton, LinearLayout.LayoutParams(dp(36), dp(42)).apply {
+            leftMargin = dp(2)
+        })
+
         addressBar = EditText(this).apply {
             setSingleLine(true)
             textSize = 14f
             setTextColor(primary)
             setHintTextColor(secondary)
-            hint = "Search privately or enter an address"
+            hint = "Search privately or enter address"
             imeOptions = EditorInfo.IME_ACTION_GO
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-            setPadding(dp(14), 0, dp(12), 0)
+            setPadding(dp(14), 0, dp(10), 0)
             background = rounded(surfaceRaised, 24)
             setSelectAllOnFocus(true)
+            maxLines = 1
             setOnEditorActionListener { _, actionId, event ->
                 val enter = event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN
                 if (actionId == EditorInfo.IME_ACTION_GO || enter) {
@@ -169,11 +182,35 @@ class MainActivity : Activity() {
                 } else false
             }
         }
-        addressRow.addView(addressBar, LinearLayout.LayoutParams(0, dp(48), 1f))
-        val go = textButton("Go")
-        go.setOnClickListener { navigateTo(addressBar.text.toString()) }
-        addressRow.addView(go, LinearLayout.LayoutParams(dp(54), dp(48)).apply { leftMargin = dp(6) })
-        root.addView(addressRow)
+        toolbar.addView(addressBar, LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+            leftMargin = dp(5)
+            rightMargin = dp(5)
+        })
+
+        val newTabButton = toolbarButton("+", "Open a new tab") {
+            if (createTab() != null) showHome()
+        }.apply { textSize = 25f }
+        toolbar.addView(newTabButton, LinearLayout.LayoutParams(dp(38), dp(42)))
+
+        tabButton = textButton("1").apply {
+            textSize = 13f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            gravity = Gravity.CENTER
+            contentDescription = "Open tabs"
+            background = tabBadgeBackground()
+            setOnClickListener { showTabsDialog() }
+        }
+        toolbar.addView(tabButton, LinearLayout.LayoutParams(dp(36), dp(36)).apply {
+            leftMargin = dp(4)
+        })
+
+        menuButton = toolbarButton("⋮", "Browser menu") {
+            showBrowserMenu(menuButton)
+        }.apply { textSize = 23f }
+        toolbar.addView(menuButton, LinearLayout.LayoutParams(dp(34), dp(42)).apply {
+            leftMargin = dp(2)
+        })
+        root.addView(toolbar, LinearLayout.LayoutParams(-1, dp(54)))
 
         progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -198,22 +235,23 @@ class MainActivity : Activity() {
         contentFrame.addView(settingsPanel, FrameLayout.LayoutParams(-1, -1))
         root.addView(contentFrame, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        bottomBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(Color.rgb(13, 13, 13))
-            setPadding(dp(5), dp(7), dp(5), dp(7))
-        }
-        addBottomButton("‹", "Back") { currentTab()?.webView?.let { if (it.canGoBack()) it.goBack() } }
-        addBottomButton("›", "Forward") { currentTab()?.webView?.let { if (it.canGoForward()) it.goForward() } }
-        addBottomButton("⌂", "Home") { showHome() }
-        tabButton = textButton("▢ 1")
-        tabButton.setOnClickListener { showTabsDialog() }
-        bottomBar.addView(tabButton, LinearLayout.LayoutParams(0, dp(46), 1f))
-        addBottomButton("⚙", "Settings") { showSettings() }
-        root.addView(bottomBar)
-
         setContentView(root)
+        updateToolbarState()
+    }
+
+    private fun toolbarButton(label: String, description: String, action: () -> Unit): Button =
+        textButton(label).apply {
+            textSize = 22f
+            gravity = Gravity.CENTER
+            contentDescription = description
+            background = rounded(surface, 12)
+            setOnClickListener { action() }
+        }
+
+    private fun tabBadgeBackground(): GradientDrawable = GradientDrawable().apply {
+        setColor(surface)
+        setStroke(dp(1), outline)
+        cornerRadius = dp(9).toFloat()
     }
 
     private fun buildHomePanel(): LinearLayout {
@@ -261,7 +299,7 @@ class MainActivity : Activity() {
         })
         panel.addView(shortcuts, LinearLayout.LayoutParams(-1, ViewGroup.LayoutParams.WRAP_CONTENT))
         val note = TextView(this).apply {
-            text = "JavaScript is blocked on new sites until you allow it. Tap the shield menu to make a per-site exception."
+            text = "JavaScript is blocked on new sites until you allow it. Open the menu to allow JavaScript for the current site."
             textSize = 12f
             setTextColor(secondary)
             gravity = Gravity.CENTER
@@ -296,14 +334,6 @@ class MainActivity : Activity() {
         return row
     }
 
-    private fun addBottomButton(symbol: String, label: String, action: () -> Unit) {
-        val button = textButton("$symbol\n$label").apply {
-            textSize = 12f
-            setOnClickListener { action() }
-        }
-        bottomBar.addView(button, LinearLayout.LayoutParams(0, dp(46), 1f))
-    }
-
     private fun textButton(label: String): Button = Button(this).apply {
         text = label
         textSize = 13f
@@ -324,18 +354,118 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun createTab(): BrowserTab {
+    private fun createTab(): BrowserTab? {
         val id = nextTabId++
-        val webView = WebView(this)
-        webView.setBackgroundColor(bg)
-        configureWebView(webView, id)
-        webContainer.addView(webView, FrameLayout.LayoutParams(-1, -1))
-        webView.visibility = View.GONE
+        val webView = try {
+            WebView(this)
+        } catch (error: RuntimeException) {
+            showWebViewUnavailable(error)
+            return null
+        }
+
+        try {
+            webView.setBackgroundColor(bg)
+            configureWebView(webView, id)
+            webContainer.addView(webView, FrameLayout.LayoutParams(-1, -1))
+            webView.visibility = View.GONE
+        } catch (error: RuntimeException) {
+            runCatching { webView.stopLoading(); webView.removeAllViews(); webView.destroy() }
+            showWebViewUnavailable(error)
+            return null
+        }
+
         val tab = BrowserTab(id, webView)
         tabs.add(tab)
         currentTabId = id
         updateTabButton()
         return tab
+    }
+
+    private fun webViewProviderDescription(): String {
+        return try {
+            val provider = if (android.os.Build.VERSION.SDK_INT >= 26) WebView.getCurrentWebViewPackage() else null
+            provider?.let { "${it.packageName} (${it.versionName})" } ?: "No compatible provider reported"
+        } catch (error: RuntimeException) {
+            "Provider lookup failed: ${error.javaClass.simpleName}"
+        }
+    }
+
+    private fun showWebViewUnavailable(error: RuntimeException) {
+        val detail = "${error.javaClass.simpleName}: ${error.message ?: "No additional error details"}"
+        android.util.Log.e("NoctisStartup", "Android System WebView could not be initialized", error)
+        if (!::homePanel.isInitialized || !::contentFrame.isInitialized) {
+            showStartupFailure(error)
+            return
+        }
+
+        homePanel.removeAllViews()
+        homePanel.gravity = Gravity.CENTER
+        homePanel.setPadding(dp(28), dp(24), dp(28), dp(24))
+        homePanel.addView(TextView(this).apply {
+            text = "No compatible WebView"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(primary)
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        })
+        homePanel.addView(TextView(this).apply {
+            text = "Noctis uses the Android System WebView installed by your ROM. It could not be started. Check Settings → Developer options → WebView implementation and make sure a supported provider is installed and enabled."
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(secondary)
+            setPadding(0, dp(12), 0, dp(16))
+        })
+        homePanel.addView(TextView(this).apply {
+            text = "Provider: ${webViewProviderDescription()}\nError: $detail"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(secondary)
+            setTextIsSelectable(true)
+        })
+        homePanel.addView(textButton("Retry").apply {
+            setOnClickListener { retryWebViewInitialization() }
+        }, LinearLayout.LayoutParams(dp(132), dp(46)).apply { topMargin = dp(20) })
+
+        showingSettings = false
+        showingHome = true
+        webContainer.visibility = View.GONE
+        homePanel.visibility = View.VISIBLE
+        settingsPanel.visibility = View.GONE
+        progress.visibility = View.GONE
+        updateTabButton()
+    }
+
+    private fun retryWebViewInitialization() {
+        contentFrame.removeView(homePanel)
+        homePanel = buildHomePanel()
+        contentFrame.addView(homePanel, 1, FrameLayout.LayoutParams(-1, -1))
+        if (createTab() != null) showHome()
+    }
+
+    private fun showStartupFailure(error: RuntimeException) {
+        android.util.Log.e("NoctisStartup", "Noctis failed during startup", error)
+        val detail = "${error.javaClass.name}\n${error.message ?: "No additional error details"}"
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(28), dp(24), dp(28), dp(24))
+            setBackgroundColor(bg)
+        }
+        panel.addView(TextView(this).apply {
+            text = "Noctis could not start"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(primary)
+        })
+        panel.addView(TextView(this).apply {
+            text = detail
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(secondary)
+            setTextIsSelectable(true)
+            setPadding(0, dp(12), 0, 0)
+        })
+        setContentView(panel)
     }
 
     private fun configureWebView(webView: WebView, tabId: Long) {
@@ -393,7 +523,7 @@ class MainActivity : Activity() {
             ): Boolean {
                 if (settings.blockPopups || !isUserGesture || resultMsg == null) return false
                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
-                val popupTab = createTab()
+                val popupTab = createTab() ?: return false
                 transport.webView = popupTab.webView
                 resultMsg.sendToTarget()
                 showBrowser()
@@ -458,7 +588,7 @@ class MainActivity : Activity() {
         val target = if (uri.scheme.equals("http", true) && settings.httpsOnly && !isLocalHost(host)) {
             uri.buildUpon().scheme("https").build().toString()
         } else candidate
-        val tab = currentTab() ?: createTab()
+        val tab = currentTab() ?: createTab() ?: return
         tab.webView.settings.javaScriptEnabled = settings.javascriptAllowed(host)
         tab.url = target
         tab.webView.loadUrl(target)
@@ -504,7 +634,9 @@ class MainActivity : Activity() {
         webContainer.removeView(tab.webView)
         tab.webView.destroy()
         tabs.remove(tab)
-        if (tabs.isEmpty()) createTab() else currentTabId = tabs.last().id
+        if (tabs.isEmpty()) {
+            if (createTab() == null) return
+        } else currentTabId = tabs.last().id
         Toast.makeText(this, "A page process stopped unexpectedly. The tab was closed.", Toast.LENGTH_LONG).show()
         if (currentTab()?.url.isNullOrBlank()) showHome() else showBrowser()
         updateTabButton()
@@ -522,7 +654,7 @@ class MainActivity : Activity() {
         webContainer.visibility = View.VISIBLE
         tabs.forEach { it.webView.visibility = if (it.id == currentTabId) View.VISIBLE else View.GONE }
         updateCurrentUrl()
-        updateBottomState()
+        updateToolbarState()
     }
 
     private fun showHome() {
@@ -533,7 +665,7 @@ class MainActivity : Activity() {
         settingsPanel.visibility = View.GONE
         progress.visibility = View.GONE
         addressBar.setText("")
-        updateBottomState()
+        updateToolbarState()
     }
 
     private fun showSettings() {
@@ -543,7 +675,7 @@ class MainActivity : Activity() {
         homePanel.visibility = View.GONE
         settingsPanel.visibility = View.VISIBLE
         rebuildSettingsPanel()
-        updateBottomState()
+        updateToolbarState()
     }
 
     private fun updateCurrentUrl() {
@@ -556,15 +688,14 @@ class MainActivity : Activity() {
     }
 
     private fun updateTabButton() {
-        if (::tabButton.isInitialized) tabButton.text = "▢ ${tabs.size}"
+        if (::tabButton.isInitialized) {
+            tabButton.text = tabs.size.coerceAtMost(99).toString()
+            tabButton.contentDescription = "${tabs.size} open tabs"
+        }
     }
 
-    private fun updateBottomState() {
+    private fun updateToolbarState() {
         updateTabButton()
-        if (::privateButton.isInitialized) {
-            privateButton.text = if (settings.privateSession) "● Private" else "◌ Private"
-            privateButton.setTextColor(if (settings.privateSession) accent else primary)
-        }
     }
 
     private fun hideKeyboard() {
@@ -585,7 +716,7 @@ class MainActivity : Activity() {
             tabs.forEach { tab ->
                 tab.webView.settings.cacheMode = if (entering || !settings.diskCacheEnabled) android.webkit.WebSettings.LOAD_NO_CACHE else android.webkit.WebSettings.LOAD_DEFAULT
             }
-            updateBottomState()
+            updateToolbarState()
             Toast.makeText(
                 this,
                 if (entering) "Private session started. Cookies are disabled; temporary site data is cleared when it ends." else "Private session ended. Temporary site data was cleared.",
@@ -658,9 +789,11 @@ class MainActivity : Activity() {
         popup.menu.add(Menu.NONE, 7, 7, "Reload")
         popup.menu.add(Menu.NONE, 8, 8, "Clear browsing data")
         popup.menu.add(Menu.NONE, 9, 9, "Settings")
+        popup.menu.add(Menu.NONE, 10, 10, if (settings.privateSession) "End private session" else "Start private session")
+        popup.menu.add(Menu.NONE, 11, 11, "About & license")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                1 -> { createTab(); showHome(); true }
+                1 -> { if (createTab() != null) showHome(); true }
                 2 -> { bookmarkCurrentPage(); true }
                 3 -> { showBookmarksDialog(); true }
                 4 -> { toggleJavascriptForCurrentSite(); true }
@@ -669,6 +802,8 @@ class MainActivity : Activity() {
                 7 -> { currentTab()?.webView?.reload(); showBrowser(); true }
                 8 -> { confirmClearData(); true }
                 9 -> { showSettings(); true }
+                10 -> { togglePrivateSession(); true }
+                11 -> { showAboutDialog(); true }
                 else -> false
             }
         }
@@ -718,7 +853,7 @@ class MainActivity : Activity() {
                 currentTabId = tabs[which].id
                 if (tabs[which].url.isBlank()) showHome() else showBrowser()
             }
-            .setNeutralButton("New tab") { _, _ -> createTab(); showHome() }
+            .setNeutralButton("New tab") { _, _ -> if (createTab() != null) showHome() }
             .setPositiveButton("Close current") { _, _ -> closeCurrentTab() }
             .setNegativeButton("Done", null).show()
     }
@@ -729,7 +864,9 @@ class MainActivity : Activity() {
         tab.webView.stopLoading()
         tab.webView.destroy()
         tabs.remove(tab)
-        if (tabs.isEmpty()) createTab() else currentTabId = tabs.last().id
+        if (tabs.isEmpty()) {
+            if (createTab() == null) return
+        } else currentTabId = tabs.last().id
         if (currentTab()?.url.isNullOrBlank()) showHome() else showBrowser()
         updateTabButton()
     }
@@ -797,11 +934,11 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        if (!settings.privateSession) CookieManager.getInstance().flush()
+        if (::settings.isInitialized && !settings.privateSession) CookieManager.getInstance().flush()
     }
 
     override fun onDestroy() {
-        if (isFinishing && (settings.clearOnExit || settings.privateSession)) {
+        if (::settings.isInitialized && isFinishing && (settings.clearOnExit || settings.privateSession)) {
             // Best-effort cleanup on a normal Activity finish; Android may kill a process without callbacks.
             tabs.forEach {
                 it.webView.clearCache(true)
@@ -812,6 +949,17 @@ class MainActivity : Activity() {
             CookieManager.getInstance().removeAllCookies(null)
             CookieManager.getInstance().flush()
         }
+
+        // WebView holds native resources; explicitly detach and destroy every tab when
+        // the Activity goes away instead of leaving renderer-backed views referenced.
+        tabs.toList().forEach { tab ->
+            tab.webView.stopLoading()
+            tab.webView.onPause()
+            (tab.webView.parent as? ViewGroup)?.removeView(tab.webView)
+            tab.webView.removeAllViews()
+            tab.webView.destroy()
+        }
+        tabs.clear()
         super.onDestroy()
     }
 
@@ -834,6 +982,14 @@ class MainActivity : Activity() {
             setTextColor(secondary)
             setPadding(0, dp(5), 0, dp(18))
         })
+
+        addSettingsSection(page, "APPEARANCE")
+        addSettingsAction(
+            page,
+            "Theme",
+            if (settings.themeMode == BrowserSettings.THEME_LIGHT) "Light" else "AMOLED black",
+            "Change"
+        ) { showThemePicker() }
 
         addSettingsSection(page, "SECURITY & CONNECTION")
         addSettingsSwitch(page, "HTTPS-only mode", "Upgrade typed HTTP links and block insecure HTTP subresources.",
@@ -880,15 +1036,8 @@ class MainActivity : Activity() {
         addSettingsAction(page, "Bookmarks", "Bookmarks are stored locally; browsing history is not saved", "Open") {
             showBookmarksDialog()
         }
-        addSettingsAction(page, "About Noctis", "Version 0.1.0 · Kotlin · Android System WebView", "View") {
-            AlertDialog.Builder(this)
-                .setTitle("Noctis 0.1.0")
-                .setMessage(
-                    "A small, local-first Android browser inspired by Monivo.\n\n" +
-                        "Noctis does not use Google Play Services, analytics SDKs, crash-reporting SDKs or a remote account system.\n\n" +
-                        "Web content is rendered by the Android System WebView provider installed on your device. That provider may be supplied by your ROM vendor."
-                )
-                .setPositiveButton("OK", null).show()
+        addSettingsAction(page, "About Noctis", "Version 0.2.1 · Kotlin · Android System WebView · AGPL-3.0", "View") {
+            showAboutDialog()
         }
 
         page.addView(TextView(this).apply {
@@ -1039,6 +1188,164 @@ class MainActivity : Activity() {
                 settings.setCustomBlockedHosts(RequestFilter.normalizeHostList(input.text.toString()))
                 Toast.makeText(this, "Local host list saved", Toast.LENGTH_SHORT).show()
             }.show()
+    }
+
+    private fun showThemePicker() {
+        val choices = arrayOf("AMOLED black", "Light")
+        val selected = if (settings.themeMode == BrowserSettings.THEME_LIGHT) 1 else 0
+        AlertDialog.Builder(this)
+            .setTitle("Appearance")
+            .setSingleChoiceItems(choices, selected) { dialog, which ->
+                settings.themeMode = if (which == 1) BrowserSettings.THEME_LIGHT else BrowserSettings.THEME_AMOLED
+                setTheme(if (settings.themeMode == BrowserSettings.THEME_LIGHT) R.style.NoctisTheme_Light else R.style.NoctisTheme)
+                applyThemePalette(updateViews = true)
+                updateSystemBars()
+                if (showingSettings) rebuildSettingsPanel()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun currentPalette() = ThemePalette(bg, surface, surfaceRaised, primary, secondary, accent, outline)
+
+    private fun applyThemePalette(updateViews: Boolean) {
+        val previous = currentPalette()
+        if (settings.themeMode == BrowserSettings.THEME_LIGHT) {
+            bg = Color.rgb(250, 250, 250)
+            surface = Color.rgb(255, 255, 255)
+            surfaceRaised = Color.rgb(239, 239, 239)
+            primary = Color.rgb(22, 22, 22)
+            secondary = Color.rgb(98, 98, 98)
+            accent = Color.rgb(58, 58, 58)
+            outline = Color.rgb(202, 202, 202)
+        } else {
+            bg = Color.rgb(0, 0, 0)
+            surface = Color.rgb(16, 16, 16)
+            surfaceRaised = Color.rgb(26, 26, 26)
+            primary = Color.rgb(242, 242, 242)
+            secondary = Color.rgb(166, 166, 166)
+            accent = Color.rgb(189, 189, 189)
+            outline = Color.rgb(76, 76, 76)
+        }
+        if (updateViews && ::root.isInitialized) {
+            recolorViewTree(root, previous, currentPalette())
+            tabs.forEach { it.webView.setBackgroundColor(bg) }
+            if (::tabButton.isInitialized) tabButton.background = tabBadgeBackground()
+        }
+    }
+
+    private fun updateSystemBars() {
+        // Access decorView first so the Window has initialized its DecorView. Avoid
+        // Window.insetsController here: on some Android builds it dereferences the
+        // internal decor before that view has been created.
+        val decorView = window.decorView
+        window.statusBarColor = bg
+        window.navigationBarColor = bg
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+
+        val lightSystemIcons = settings.themeMode == BrowserSettings.THEME_LIGHT
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val appearance = android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
+            // post() waits until the decor is attached and its insets controller exists.
+            decorView.post {
+                decorView.windowInsetsController?.setSystemBarsAppearance(
+                    if (lightSystemIcons) appearance else 0,
+                    appearance
+                )
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            decorView.systemUiVisibility = if (lightSystemIcons) {
+                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else 0
+        }
+    }
+
+    private fun recolorViewTree(view: View, previous: ThemePalette, next: ThemePalette) {
+        when (val drawable = view.background) {
+            is GradientDrawable -> {
+                val color = drawable.color?.defaultColor
+                val replacement = replacementColor(color, previous, next)
+                if (replacement != null) drawable.setColor(replacement)
+                if (view === tabButton) drawable.setStroke(dp(1), next.outline)
+            }
+            is android.graphics.drawable.ColorDrawable -> {
+                val replacement = replacementColor(drawable.color, previous, next)
+                if (replacement != null) view.setBackgroundColor(replacement)
+            }
+        }
+
+        if (view is TextView) {
+            replacementColor(view.textColors.defaultColor, previous, next)?.let(view::setTextColor)
+            replacementColor(view.hintTextColors.defaultColor, previous, next)?.let(view::setHintTextColor)
+        }
+        if (view is ProgressBar) {
+            view.progressTintList = android.content.res.ColorStateList.valueOf(next.accent)
+            view.progressBackgroundTintList = android.content.res.ColorStateList.valueOf(next.surface)
+        }
+        if (view is Switch) {
+            view.thumbTintList = android.content.res.ColorStateList.valueOf(next.accent)
+            view.trackTintList = android.content.res.ColorStateList.valueOf(next.outline)
+        }
+        if (view is WebView) view.setBackgroundColor(next.bg)
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) recolorViewTree(view.getChildAt(index), previous, next)
+        }
+    }
+
+    private fun replacementColor(color: Int?, previous: ThemePalette, next: ThemePalette): Int? = when (color) {
+        previous.bg -> next.bg
+        previous.surface -> next.surface
+        previous.surfaceRaised -> next.surfaceRaised
+        previous.primary -> next.primary
+        previous.secondary -> next.secondary
+        previous.accent -> next.accent
+        previous.outline -> next.outline
+        else -> null
+    }
+
+    private fun showAboutDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("About Noctis 0.2.1")
+            .setMessage(
+                "Noctis is a small, local-first Android browser inspired by Monivo.\n\n" +
+                    "Copyright (C) 2026 Noctis contributors.\n" +
+                    "Licensed under the GNU Affero General Public License, version 3 or later (AGPL-3.0-or-later).\n\n" +
+                    "This program comes with no warranty. You may redistribute and modify it under the terms of the AGPL-3.0.\n\n" +
+                    "Noctis does not use Google Play Services, analytics SDKs, crash-reporting SDKs or a remote account system. " +
+                    "Web content is rendered by the Android System WebView provider installed on your device."
+            )
+            .setNeutralButton("View license") { _, _ -> showLicenseDialog() }
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun showLicenseDialog() {
+        val licenseText = try {
+            assets.open("AGPL-3.0.txt").bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            "GNU Affero General Public License, version 3.\n\nSee https://www.gnu.org/licenses/agpl-3.0.html"
+        }
+        val textView = TextView(this).apply {
+            text = licenseText
+            textSize = 12f
+            setTextColor(primary)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        val scroller = ScrollView(this).apply {
+            addView(textView)
+            setBackgroundColor(bg)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("GNU AGPL-3.0")
+            .setView(scroller)
+            .setPositiveButton("Close", null)
+            .show()
     }
 
     private fun showSearchEnginePicker() {
