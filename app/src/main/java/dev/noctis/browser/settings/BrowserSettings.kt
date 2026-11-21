@@ -1,3 +1,9 @@
+/*
+ * Noctis - lightweight, privacy-first Android browser
+ * Copyright (C) 2026 Noctis contributors
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
 package dev.noctis.browser.settings
 
 import android.content.Context
@@ -8,6 +14,12 @@ import org.json.JSONObject
 /** Persistent browser preferences. No navigation history is stored here. */
 class BrowserSettings(context: Context) {
     private val preferences = context.getSharedPreferences("noctis_settings", Context.MODE_PRIVATE)
+
+    var themeMode: String
+        get() = preferences.getString("theme_mode", THEME_AMOLED) ?: THEME_AMOLED
+        set(value) = preferences.edit()
+            .putString("theme_mode", if (value == THEME_LIGHT) THEME_LIGHT else THEME_AMOLED)
+            .apply()
 
     var httpsOnly: Boolean
         get() = preferences.getBoolean("https_only", true)
@@ -155,6 +167,10 @@ class BrowserSettings(context: Context) {
         val json = JSONArray()
         bookmarks.forEach { json.put(JSONObject().put("title", it.title).put("url", it.url)) }
         preferences.edit().putString("bookmarks", json.toString()).apply()
+    }
+    companion object {
+        const val THEME_AMOLED = "amoled"
+        const val THEME_LIGHT = "light"
     }
 }
 
