@@ -6,7 +6,7 @@ The project borrows design principles from [Monivo](https://github.com/r2ality/m
 
 ## Download
 
-Download the binary [here](https://github.com/r2ality/noctis/releases)
+Download the binary APK [here](https://github.com/r2ality/noctis/releases)
 
 ## Why would you want to use this?
 
